@@ -399,10 +399,11 @@
         <div class="info-text">
             <strong>使用说明：</strong><br>
             1. 点击"开始专注"进入心流状态，计时器会正向计时<br>
-            2. 休息时间采用平方模型累积：<strong>休息时间 ∝ 专注时间²</strong><br>
-            &nbsp;&nbsp;&nbsp;• 专注30分钟 → 赚2.5分钟休息<br>
-            &nbsp;&nbsp;&nbsp;• 专注60分钟 → 赚10分钟休息<br>
-            &nbsp;&nbsp;&nbsp;• 专注90分钟 → 赚22.5分钟休息<br>
+            2. 休息时间采用平方模型：<strong>休息时间 = 3 + 0.004 × (专注时间)²</strong><br>
+            &nbsp;&nbsp;&nbsp;• 专注30分钟 → 赚6.6分钟休息<br>
+            &nbsp;&nbsp;&nbsp;• 专注60分钟 → 赚17.4分钟休息<br>
+            &nbsp;&nbsp;&nbsp;• 专注90分钟 → 赚35.4分钟休息<br>
+            &nbsp;&nbsp;&nbsp;• 专注120分钟 → 赚60.6分钟休息<br>
             3. 休息时间累积≥5分钟后，"开始休息"按钮会激活<br>
             4. 平方模型反映真实疲劳规律：专注越久，疲劳加速累积，需要更多休息<br>
             5. 休息时会消耗累积的休息时间，可随时结束休息继续专注<br>
@@ -441,16 +442,30 @@
             }
 
             calculateRestTime(focusSeconds) {
-                // 休息时间 ∝ 专注时间²
-                // 基准：60分钟专注 → 10分钟休息
-                // coefficient = 600秒 / (3600秒)² ≈ 0.0000463
-                const coefficient = 600 / (3600 * 3600);
-                return coefficient * focusSeconds * focusSeconds;
+                // 休息时间 = 3 + 0.004 × (专注时间分钟)²
+                // focusSeconds 是秒，需要转换为分钟
+                const focusMinutes = focusSeconds / 60;
+                const restMinutes = 3 + 0.004 * focusMinutes * focusMinutes;
+                return restMinutes * 60; // 转换回秒
             }
 
-            getRestCoefficient() {
-                // 返回系数用于反向计算
-                return 600 / (3600 * 3600);
+            calculateFocusTimeNeeded(currentFocusSeconds, restTimeNeeded) {
+                // 反向计算：已知需要的休息时间，求还需专注多久
+                // 设当前累积休息 = 3 + 0.004 * t1²（t1是分钟）
+                // 需要休息 = 3 + 0.004 * t2²
+                // t2² = (需要休息 - 3) / 0.004
+                // t2 = sqrt((需要休息 - 3) / 0.004)
+
+                const currentFocusMinutes = currentFocusSeconds / 60;
+                const currentRestMinutes = this.calculateRestTime(currentFocusSeconds) / 60;
+                const targetRestMinutes = currentRestMinutes + (restTimeNeeded / 60);
+
+                // t2² = (targetRest - 3) / 0.004
+                const t2Squared = Math.max(0, (targetRestMinutes - 3) / 0.004);
+                const t2 = Math.sqrt(t2Squared);
+                const focusTimeNeededMinutes = t2 - currentFocusMinutes;
+
+                return focusTimeNeededMinutes * 60; // 转换为秒
             }
 
             startFocus() {
@@ -645,15 +660,9 @@
                     restStatus.style.color = '#10b981';
                     restBtn.disabled = false;
                 } else {
-                    // 使用平方根公式计算还需专注的时间
-                    // 当前专注时间：t1，还需休息时间：needed
-                    // k×t2² - k×t1² = needed
-                    // t2 = sqrt(t1² + needed/k)
+                    // 使用新公式计算还需专注的时间
                     const needed = 300 - totalAvailableRest;
-                    const k = this.getRestCoefficient();
-                    const t1 = this.focusTime;
-                    const t2 = Math.sqrt(t1 * t1 + needed / k);
-                    const focusTimeNeeded = t2 - t1;
+                    const focusTimeNeeded = this.calculateFocusTimeNeeded(this.focusTime, needed);
                     const minutesNeeded = Math.ceil(focusTimeNeeded / 60);
                     restStatus.textContent = `还需专注约${minutesNeeded}分钟`;
                     restStatus.style.color = '#64748b';
