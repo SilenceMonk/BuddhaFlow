@@ -411,6 +411,7 @@
             constructor() {
                 this.state = 'idle'; // idle, focusing, resting, paused
                 this.focusTime = 0; // 当前会话专注时间（秒）
+                this.lastFocusTime = 0; // 上一次记录的专注时间（用于计算增量）
                 this.accumulatedRestTime = 0; // 累积的休息时间（秒）
                 this.currentRestTime = 0; // 当前休息已用时间（秒）
                 this.startTime = null;
@@ -481,6 +482,7 @@
                 this.state = 'resting';
                 this.currentRestTime = 0;
                 this.focusTime = 0;
+                this.lastFocusTime = 0;
                 this.startTime = Date.now();
 
                 clearInterval(this.timerInterval);
@@ -507,6 +509,7 @@
 
                 this.state = 'idle';
                 this.focusTime = 0;
+                this.lastFocusTime = 0;
                 this.currentRestTime = 0;
                 this.startTime = null;
                 this.pauseTime = 0;
@@ -519,10 +522,14 @@
                 const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
                 this.focusTime = elapsed;
 
-                // 计算累积的休息时间
-                const ratio = this.calculateRestRatio();
-                const earnedRest = this.focusTime * ratio;
-                this.accumulatedRestTime = earnedRest;
+                // 计算增量专注时间，累积休息时间
+                const incrementalFocusTime = this.focusTime - this.lastFocusTime;
+                if (incrementalFocusTime > 0) {
+                    const ratio = this.calculateRestRatio();
+                    const earnedRest = incrementalFocusTime * ratio;
+                    this.accumulatedRestTime += earnedRest;
+                    this.lastFocusTime = this.focusTime;
+                }
 
                 this.updateUI();
             }
@@ -611,21 +618,24 @@
                 const restProgress = Math.min(100, (this.accumulatedRestTime / 300) * 100);
                 document.getElementById('restProgress').style.width = restProgress + '%';
 
+                // 计算当前休息比例
+                const ratio = this.calculateRestRatio();
+                restRatio.textContent = Math.round(ratio * 100) + '%';
+
                 const restStatus = document.getElementById('restStatus');
                 if (this.accumulatedRestTime >= 300) {
                     restStatus.textContent = '可以休息了！';
                     restStatus.style.color = '#10b981';
                     restBtn.disabled = false;
                 } else {
-                    const needed = Math.ceil((300 - this.accumulatedRestTime) / 60);
-                    restStatus.textContent = `还需专注约${needed}分钟`;
+                    // 根据动态休息比例计算还需专注的时间
+                    const restTimeNeeded = 300 - this.accumulatedRestTime;
+                    const focusTimeNeeded = restTimeNeeded / ratio;
+                    const minutesNeeded = Math.ceil(focusTimeNeeded / 60);
+                    restStatus.textContent = `还需专注约${minutesNeeded}分钟`;
                     restStatus.style.color = '#64748b';
                     restBtn.disabled = true;
                 }
-
-                // 更新休息比例
-                const ratio = this.calculateRestRatio();
-                restRatio.textContent = Math.round(ratio * 100) + '%';
 
                 // 更新今日和本周总计
                 const today = new Date().toISOString().split('T')[0];
