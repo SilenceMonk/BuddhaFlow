@@ -345,8 +345,8 @@
                 <div class="timer-label" id="timerLabel">准备开始专注</div>
 
                 <div class="rest-ratio-indicator">
-                    <span>休息比例:</span>
-                    <span class="ratio-badge" id="restRatio">20%</span>
+                    <span>有效休息率:</span>
+                    <span class="ratio-badge" id="restRatio">平方模型</span>
                 </div>
 
                 <div class="controls">
@@ -399,10 +399,14 @@
         <div class="info-text">
             <strong>使用说明：</strong><br>
             1. 点击"开始专注"进入心流状态，计时器会正向计时<br>
-            2. 专注时间会自动积累休息时间（专注时间 × 休息比例）<br>
+            2. 休息时间采用平方模型累积：<strong>休息时间 ∝ 专注时间²</strong><br>
+            &nbsp;&nbsp;&nbsp;• 专注30分钟 → 赚2.5分钟休息<br>
+            &nbsp;&nbsp;&nbsp;• 专注60分钟 → 赚10分钟休息<br>
+            &nbsp;&nbsp;&nbsp;• 专注90分钟 → 赚22.5分钟休息<br>
             3. 休息时间累积≥5分钟后，"开始休息"按钮会激活<br>
-            4. 休息比例随专注时间增加而提高（从20%起），反映疲劳恢复需求<br>
-            5. 休息时会消耗累积的休息时间，可随时结束休息继续专注
+            4. 平方模型反映真实疲劳规律：专注越久，疲劳加速累积，需要更多休息<br>
+            5. 休息时会消耗累积的休息时间，可随时结束休息继续专注<br>
+            6. 多次专注会话的休息时间会累积，鼓励保持长期专注习惯
         </div>
     </div>
 
@@ -411,8 +415,8 @@
             constructor() {
                 this.state = 'idle'; // idle, focusing, resting, paused
                 this.focusTime = 0; // 当前会话专注时间（秒）
-                this.lastFocusTime = 0; // 上一次记录的专注时间（用于计算增量）
-                this.accumulatedRestTime = 0; // 累积的休息时间（秒）
+                this.accumulatedRestTime = 0; // 累积的休息时间余额（秒）
+                this.currentSessionEarnedRest = 0; // 当前会话赚到的休息时间（秒）
                 this.currentRestTime = 0; // 当前休息已用时间（秒）
                 this.startTime = null;
                 this.pauseTime = 0;
@@ -436,14 +440,17 @@
                 localStorage.setItem('buddhaflow_sessions', JSON.stringify(this.sessions));
             }
 
-            calculateRestRatio() {
-                // 基础比例0.2，随着累积休息时间增加
-                // 每小时的累积休息时间增加0.05的比例，最大到0.5
-                const baseRatio = 0.2;
-                const maxRatio = 0.5;
-                const hoursAccumulated = this.accumulatedRestTime / 3600;
-                const ratio = baseRatio + Math.min(0.3, hoursAccumulated * 0.05);
-                return Math.min(maxRatio, ratio);
+            calculateRestTime(focusSeconds) {
+                // 休息时间 ∝ 专注时间²
+                // 基准：60分钟专注 → 10分钟休息
+                // coefficient = 600秒 / (3600秒)² ≈ 0.0000463
+                const coefficient = 600 / (3600 * 3600);
+                return coefficient * focusSeconds * focusSeconds;
+            }
+
+            getRestCoefficient() {
+                // 返回系数用于反向计算
+                return 600 / (3600 * 3600);
             }
 
             startFocus() {
@@ -469,7 +476,10 @@
             }
 
             startRest() {
-                if (this.accumulatedRestTime < 300) { // 5分钟
+                // 计算总可用休息时间 = 累积余额 + 当前会话赚到的
+                const totalAvailableRest = this.accumulatedRestTime + this.currentSessionEarnedRest;
+
+                if (totalAvailableRest < 300) { // 5分钟
                     alert('休息时间还不足5分钟，继续专注吧！');
                     return;
                 }
@@ -479,10 +489,13 @@
                     this.saveSession(this.focusTime);
                 }
 
+                // 将当前会话赚到的休息时间加入累积余额
+                this.accumulatedRestTime += this.currentSessionEarnedRest;
+                this.currentSessionEarnedRest = 0;
+
                 this.state = 'resting';
                 this.currentRestTime = 0;
                 this.focusTime = 0;
-                this.lastFocusTime = 0;
                 this.startTime = Date.now();
 
                 clearInterval(this.timerInterval);
@@ -499,17 +512,20 @@
 
             reset() {
                 if (this.state === 'focusing' && this.focusTime > 60) {
-                    if (!confirm('确定要重置吗？当前专注数据将会保存。')) {
+                    const shouldSave = confirm('确定要重置吗？当前专注数据将会保存，休息时间会加入余额。');
+                    if (!shouldSave) {
                         return;
                     }
                     if (this.focusTime > 0) {
                         this.saveSession(this.focusTime);
+                        // 将当前会话赚到的休息时间加入累积余额
+                        this.accumulatedRestTime += this.currentSessionEarnedRest;
                     }
                 }
 
                 this.state = 'idle';
                 this.focusTime = 0;
-                this.lastFocusTime = 0;
+                this.currentSessionEarnedRest = 0;
                 this.currentRestTime = 0;
                 this.startTime = null;
                 this.pauseTime = 0;
@@ -522,14 +538,8 @@
                 const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
                 this.focusTime = elapsed;
 
-                // 计算增量专注时间，累积休息时间
-                const incrementalFocusTime = this.focusTime - this.lastFocusTime;
-                if (incrementalFocusTime > 0) {
-                    const ratio = this.calculateRestRatio();
-                    const earnedRest = incrementalFocusTime * ratio;
-                    this.accumulatedRestTime += earnedRest;
-                    this.lastFocusTime = this.focusTime;
-                }
+                // 基于当前专注时间的平方计算本次会话应得的休息时间
+                this.currentSessionEarnedRest = this.calculateRestTime(this.focusTime);
 
                 this.updateUI();
             }
@@ -610,27 +620,40 @@
                 document.getElementById('currentFocusTime').textContent =
                     Math.floor(this.focusTime / 60) + '分钟';
 
-                const accRestMinutes = Math.floor(this.accumulatedRestTime / 60);
+                // 计算总可用休息时间（累积余额 + 当前会话赚到的）
+                const totalAvailableRest = this.accumulatedRestTime + this.currentSessionEarnedRest;
+                const totalRestMinutes = Math.floor(totalAvailableRest / 60);
+                const totalRestSeconds = Math.floor(totalAvailableRest % 60);
                 document.getElementById('accumulatedRest').textContent =
-                    accRestMinutes + '分钟';
+                    `${totalRestMinutes}分${totalRestSeconds}秒`;
 
                 // 更新休息进度条
-                const restProgress = Math.min(100, (this.accumulatedRestTime / 300) * 100);
+                const restProgress = Math.min(100, (totalAvailableRest / 300) * 100);
                 document.getElementById('restProgress').style.width = restProgress + '%';
 
-                // 计算当前休息比例
-                const ratio = this.calculateRestRatio();
-                restRatio.textContent = Math.round(ratio * 100) + '%';
+                // 显示平方模型说明（基于当前专注时间计算的比例）
+                if (this.focusTime > 0) {
+                    const effectiveRatio = this.currentSessionEarnedRest / this.focusTime;
+                    restRatio.textContent = `${Math.round(effectiveRatio * 100)}% (平方增长)`;
+                } else {
+                    restRatio.textContent = '平方模型';
+                }
 
                 const restStatus = document.getElementById('restStatus');
-                if (this.accumulatedRestTime >= 300) {
+                if (totalAvailableRest >= 300) {
                     restStatus.textContent = '可以休息了！';
                     restStatus.style.color = '#10b981';
                     restBtn.disabled = false;
                 } else {
-                    // 根据动态休息比例计算还需专注的时间
-                    const restTimeNeeded = 300 - this.accumulatedRestTime;
-                    const focusTimeNeeded = restTimeNeeded / ratio;
+                    // 使用平方根公式计算还需专注的时间
+                    // 当前专注时间：t1，还需休息时间：needed
+                    // k×t2² - k×t1² = needed
+                    // t2 = sqrt(t1² + needed/k)
+                    const needed = 300 - totalAvailableRest;
+                    const k = this.getRestCoefficient();
+                    const t1 = this.focusTime;
+                    const t2 = Math.sqrt(t1 * t1 + needed / k);
+                    const focusTimeNeeded = t2 - t1;
                     const minutesNeeded = Math.ceil(focusTimeNeeded / 60);
                     restStatus.textContent = `还需专注约${minutesNeeded}分钟`;
                     restStatus.style.color = '#64748b';
