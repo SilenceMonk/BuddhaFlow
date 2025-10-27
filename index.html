@@ -419,6 +419,7 @@
                 this.accumulatedRestTime = 0; // 累积的休息时间余额（秒）
                 this.currentSessionEarnedRest = 0; // 当前会话赚到的休息时间（秒）
                 this.currentRestTime = 0; // 当前休息已用时间（秒）
+                this.restStartAmount = 0; // 开始休息时的累积休息时间（秒）
                 this.startTime = null;
                 this.pauseTime = 0;
                 this.timerInterval = null;
@@ -508,6 +509,9 @@
                 this.accumulatedRestTime += this.currentSessionEarnedRest;
                 this.currentSessionEarnedRest = 0;
 
+                // 记录开始休息时的累积时间
+                this.restStartAmount = this.accumulatedRestTime;
+
                 this.state = 'resting';
                 this.currentRestTime = 0;
                 this.focusTime = 0;
@@ -563,12 +567,13 @@
                 const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
                 this.currentRestTime = elapsed;
 
-                // 消耗累积的休息时间
-                this.accumulatedRestTime = Math.max(0, this.accumulatedRestTime - elapsed);
+                // 正确计算剩余休息时间：开始时的累积时间 - 已休息时间
+                this.accumulatedRestTime = Math.max(0, this.restStartAmount - elapsed);
 
                 if (this.accumulatedRestTime <= 0) {
-                    alert('休息时间用完了，继续专注吧！');
+                    // 休息时间用完，自动开始专注
                     this.endRest();
+                    this.startFocus();
                     return;
                 }
 
