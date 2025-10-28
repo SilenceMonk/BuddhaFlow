@@ -434,7 +434,7 @@
             &nbsp;&nbsp;&nbsp;• 如果休息充分（剩余≤3分钟），t_eff 清零<br>
             &nbsp;&nbsp;&nbsp;• 如果休息不足，保留部分疲劳继续累积<br>
             6. <strong>离开功能：</strong>点击"离开"结束整个循环（吃饭/睡觉等），离开期间自动视为休息，下次开始时会自动计算恢复的疲劳<br>
-            7. 休息结束自动开始专注，无需手动操作
+            7. <strong>自动循环：</strong>休息时间结束后会<strong>自动强制</strong>进入新的专注周期，无需手动操作，保持专注节奏
         </div>
     </div>
 
@@ -705,15 +705,36 @@
                 const restActualMinutes = this.currentRestTime / 60;
                 const restRemaining = Math.max(0, this.restStartRequired - restActualMinutes);
 
-                // 如果休息需求满足（剩余 <= 0），提醒并自动开始专注
+                // 如果休息需求满足（剩余 <= 0），自动强制开始专注
                 if (restRemaining <= 0) {
                     this.endRest();
-                    alert('休息时间结束！准备开始专注 💪');
+                    // 显示休息结束的通知信息（非阻塞）
+                    this.showRestEndNotification();
+                    // 自动开始新的专注周期
                     this.startFocus();
                     return;
                 }
 
                 this.updateUI();
+            }
+
+            showRestEndNotification() {
+                // 在页面上显示休息结束通知（非阻塞）
+                const leaveInfoContainer = document.getElementById('leaveInfoContainer');
+                const leaveInfo = document.getElementById('leaveInfo');
+
+                leaveInfo.innerHTML = `
+                    <strong>💪 休息时间结束！</strong><br>
+                    已自动开始新的专注周期
+                `;
+                leaveInfoContainer.style.display = 'block';
+
+                // 3秒后自动隐藏通知
+                setTimeout(() => {
+                    if (leaveInfo.innerHTML.includes('休息时间结束')) {
+                        leaveInfoContainer.style.display = 'none';
+                    }
+                }, 3000);
             }
 
             saveSession(duration) {
