@@ -353,6 +353,7 @@
                     <button class="btn btn-primary" id="startBtn" onclick="app.startFocus()">开始专注</button>
                     <button class="btn btn-secondary" id="pauseBtn" onclick="app.pauseFocus()" style="display: none;">暂停</button>
                     <button class="btn btn-rest" id="restBtn" onclick="app.startRest()" disabled>开始休息</button>
+                    <button class="btn btn-secondary" id="endRestBtn" onclick="app.endRestManually()" style="display: none;">结束休息</button>
                     <button class="btn btn-secondary" id="resetBtn" onclick="app.reset()">重置</button>
                 </div>
             </div>
@@ -549,6 +550,12 @@
                 this.updateUI();
             }
 
+            endRestManually() {
+                // 手动结束休息，直接进入专注状态
+                this.endRest();
+                this.startFocus();
+            }
+
             reset() {
                 if (this.state === 'focusing' && this.currentSessionFocusTime > 60) {
                     const shouldSave = confirm('确定要重置吗？当前专注数据将会保存并累加到有效专注时间。');
@@ -623,6 +630,7 @@
                 const startBtn = document.getElementById('startBtn');
                 const pauseBtn = document.getElementById('pauseBtn');
                 const restBtn = document.getElementById('restBtn');
+                const endRestBtn = document.getElementById('endRestBtn');
                 const restRatio = document.getElementById('restRatio');
 
                 // 更新状态徽章和标签
@@ -633,6 +641,7 @@
                     timerDisplay.textContent = this.formatTime(this.currentSessionFocusTime);
                     startBtn.style.display = 'none';
                     pauseBtn.style.display = 'inline-block';
+                    endRestBtn.style.display = 'none';
                 } else if (this.state === 'resting') {
                     statusBadge.textContent = '正在休息';
                     statusBadge.style.background = 'rgba(59, 130, 246, 0.3)';
@@ -640,6 +649,7 @@
                     timerDisplay.textContent = this.formatTime(this.currentRestTime);
                     startBtn.style.display = 'none';
                     pauseBtn.style.display = 'none';
+                    endRestBtn.style.display = 'inline-block';
                 } else if (this.state === 'paused') {
                     statusBadge.textContent = '已暂停';
                     statusBadge.style.background = 'rgba(251, 191, 36, 0.3)';
@@ -648,6 +658,7 @@
                     startBtn.style.display = 'inline-block';
                     startBtn.textContent = '继续';
                     pauseBtn.style.display = 'none';
+                    endRestBtn.style.display = 'none';
                 } else {
                     statusBadge.textContent = '待开始';
                     statusBadge.style.background = 'rgba(255, 255, 255, 0.2)';
@@ -656,21 +667,40 @@
                     startBtn.style.display = 'inline-block';
                     startBtn.textContent = '开始专注';
                     pauseBtn.style.display = 'none';
+                    endRestBtn.style.display = 'none';
                 }
 
                 // 更新统计信息
                 document.getElementById('currentFocusTime').textContent =
                     Math.floor(this.currentSessionFocusTime / 60) + '分钟';
 
-                // 显示休息需求时间
-                const restRequiredMinutes = Math.floor(this.restRequired);
-                const restRequiredSeconds = Math.floor((this.restRequired % 1) * 60);
+                // 显示休息需求时间（休息时显示剩余时间）
+                let displayRestMinutes, displayRestSeconds;
+                if (this.state === 'resting') {
+                    // 休息时显示剩余休息需求
+                    const restActualMinutes = this.currentRestTime / 60;
+                    const restRemaining = Math.max(0, this.restStartRequired - restActualMinutes);
+                    displayRestMinutes = Math.floor(restRemaining);
+                    displayRestSeconds = Math.floor((restRemaining % 1) * 60);
+                } else {
+                    // 非休息时显示总休息需求
+                    displayRestMinutes = Math.floor(this.restRequired);
+                    displayRestSeconds = Math.floor((this.restRequired % 1) * 60);
+                }
                 document.getElementById('accumulatedRest').textContent =
-                    `${restRequiredMinutes}分${restRequiredSeconds}秒`;
+                    `${displayRestMinutes}分${displayRestSeconds}秒`;
 
-                // 更新休息进度条（基于5分钟门槛）
-                const restProgress = Math.min(100, (this.restRequired / 5) * 100);
-                document.getElementById('restProgress').style.width = restProgress + '%';
+                // 更新休息进度条
+                if (this.state === 'resting') {
+                    // 休息时显示已休息的进度
+                    const restActualMinutes = this.currentRestTime / 60;
+                    const restProgress = Math.min(100, (restActualMinutes / this.restStartRequired) * 100);
+                    document.getElementById('restProgress').style.width = restProgress + '%';
+                } else {
+                    // 非休息时显示基于5分钟门槛的进度
+                    const restProgress = Math.min(100, (this.restRequired / 5) * 100);
+                    document.getElementById('restProgress').style.width = restProgress + '%';
+                }
 
                 // 显示有效专注时间和有效休息率
                 if (this.currentSessionFocusTime > 0) {
