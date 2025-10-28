@@ -599,9 +599,10 @@
                 const restActualMinutes = this.currentRestTime / 60;
                 const restRemaining = Math.max(0, this.restStartRequired - restActualMinutes);
 
-                // 如果休息需求满足（剩余 <= 0），自动开始专注
+                // 如果休息需求满足（剩余 <= 0），提醒并自动开始专注
                 if (restRemaining <= 0) {
                     this.endRest();
+                    alert('休息时间结束！准备开始专注 💪');
                     this.startFocus();
                     return;
                 }
