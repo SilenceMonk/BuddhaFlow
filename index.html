@@ -364,7 +364,7 @@
                 </div>
 
                 <div class="stat-card">
-                    <h3>累积休息时间</h3>
+                    <h3>休息需求时间</h3>
                     <div class="stat-value" id="accumulatedRest">0分钟</div>
                     <div class="progress-bar">
                         <div class="progress-fill" id="restProgress" style="width: 0%"></div>
@@ -397,17 +397,18 @@
         </div>
 
         <div class="info-text">
-            <strong>使用说明：</strong><br>
+            <strong>使用说明（疲劳累积模型）：</strong><br>
             1. 点击"开始专注"进入心流状态，计时器会正向计时<br>
-            2. 休息时间采用平方模型：<strong>休息时间 = 3 + 0.004 × (专注时间)²</strong><br>
-            &nbsp;&nbsp;&nbsp;• 专注30分钟 → 赚6.6分钟休息<br>
-            &nbsp;&nbsp;&nbsp;• 专注60分钟 → 赚17.4分钟休息<br>
-            &nbsp;&nbsp;&nbsp;• 专注90分钟 → 赚35.4分钟休息<br>
-            &nbsp;&nbsp;&nbsp;• 专注120分钟 → 赚60.6分钟休息<br>
-            3. 休息时间累积≥5分钟后，"开始休息"按钮会激活<br>
-            4. 平方模型反映真实疲劳规律：专注越久，疲劳加速累积，需要更多休息<br>
-            5. 休息时会消耗累积的休息时间，可随时结束休息继续专注<br>
-            6. 多次专注会话的休息时间会累积，鼓励保持长期专注习惯
+            2. 累积模型：每次专注累加到<strong>有效专注时间 t_eff</strong>，代表疲劳度<br>
+            3. 休息需求：<strong>rest_required = 3 + 0.004 × t_eff²</strong><br>
+            &nbsp;&nbsp;&nbsp;• t_eff=30分钟 → 需休息6.6分钟<br>
+            &nbsp;&nbsp;&nbsp;• t_eff=60分钟 → 需休息17.4分钟<br>
+            &nbsp;&nbsp;&nbsp;• t_eff=90分钟 → 需休息35.4分钟<br>
+            4. 休息需求≥5分钟后，"开始休息"按钮激活<br>
+            5. 休息消除疲劳：休息后根据剩余需求反推新的 t_eff<br>
+            &nbsp;&nbsp;&nbsp;• 如果休息充分（剩余≤3分钟），t_eff 清零<br>
+            &nbsp;&nbsp;&nbsp;• 如果休息不足，保留部分疲劳继续累积<br>
+            6. 休息结束自动开始专注，无需手动操作
         </div>
     </div>
 
@@ -415,11 +416,18 @@
         class BuddhaFlowApp {
             constructor() {
                 this.state = 'idle'; // idle, focusing, resting, paused
-                this.focusTime = 0; // 当前会话专注时间（秒）
-                this.accumulatedRestTime = 0; // 累积的休息时间余额（秒）
-                this.currentSessionEarnedRest = 0; // 当前会话赚到的休息时间（秒）
+
+                // 核心状态：累积的有效专注时间（疲劳度），单位：分钟
+                this.effectiveFocusTime = 0; // t_eff
+
+                // 当前会话
+                this.currentSessionFocusTime = 0; // 当前会话专注时间（秒）
                 this.currentRestTime = 0; // 当前休息已用时间（秒）
-                this.restStartAmount = 0; // 开始休息时的累积休息时间（秒）
+
+                // 休息需求
+                this.restRequired = 0; // 当前需要的休息时间（分钟）
+                this.restStartRequired = 0; // 开始休息时需要的休息时间（分钟）
+
                 this.startTime = null;
                 this.pauseTime = 0;
                 this.timerInterval = null;
@@ -442,31 +450,30 @@
                 localStorage.setItem('buddhaflow_sessions', JSON.stringify(this.sessions));
             }
 
-            calculateRestTime(focusSeconds) {
-                // 休息时间 = 3 + 0.004 × (专注时间分钟)²
-                // focusSeconds 是秒，需要转换为分钟
-                const focusMinutes = focusSeconds / 60;
-                const restMinutes = 3 + 0.004 * focusMinutes * focusMinutes;
-                return restMinutes * 60; // 转换回秒
+            calculateRestRequired(tEffMinutes) {
+                // 计算需要的休息时间（分钟）
+                // rest_required = 3 + 0.004 * t_eff²
+                return 3 + 0.004 * tEffMinutes * tEffMinutes;
             }
 
-            calculateFocusTimeNeeded(currentFocusSeconds, restTimeNeeded) {
-                // 反向计算：已知需要的休息时间，求还需专注多久
-                // 设当前累积休息 = 3 + 0.004 * t1²（t1是分钟）
-                // 需要休息 = 3 + 0.004 * t2²
-                // t2² = (需要休息 - 3) / 0.004
-                // t2 = sqrt((需要休息 - 3) / 0.004)
+            calculateEffectiveFocusFromRest(restRemainingMinutes) {
+                // 从剩余休息需求反推有效专注时间
+                // rest_remaining = 3 + 0.004 * t_eff²
+                // t_eff = sqrt((rest_remaining - 3) / 0.004)
+                if (restRemainingMinutes <= 3) {
+                    return 0; // 休息充分，疲劳清零
+                }
+                return Math.sqrt((restRemainingMinutes - 3) / 0.004);
+            }
 
-                const currentFocusMinutes = currentFocusSeconds / 60;
-                const currentRestMinutes = this.calculateRestTime(currentFocusSeconds) / 60;
-                const targetRestMinutes = currentRestMinutes + (restTimeNeeded / 60);
-
-                // t2² = (targetRest - 3) / 0.004
-                const t2Squared = Math.max(0, (targetRestMinutes - 3) / 0.004);
-                const t2 = Math.sqrt(t2Squared);
-                const focusTimeNeededMinutes = t2 - currentFocusMinutes;
-
-                return focusTimeNeededMinutes * 60; // 转换为秒
+            calculateFocusTimeNeeded(currentTEff, currentSessionMinutes, targetRestMinutes) {
+                // 计算还需专注多久才能达到目标休息时间
+                // 当前总t_eff = currentTEff + currentSession
+                // 目标: 3 + 0.004 * t_eff² = targetRest
+                // t_eff = sqrt((targetRest - 3) / 0.004)
+                const targetTEff = Math.sqrt(Math.max(0, (targetRestMinutes - 3) / 0.004));
+                const currentTotalTEff = currentTEff + currentSessionMinutes;
+                return Math.max(0, targetTEff - currentTotalTEff);
             }
 
             startFocus() {
@@ -475,6 +482,7 @@
                 }
 
                 this.state = 'focusing';
+                this.currentSessionFocusTime = 0;
                 this.startTime = Date.now() - (this.pauseTime || 0);
                 this.pauseTime = 0;
 
@@ -492,29 +500,30 @@
             }
 
             startRest() {
-                // 计算总可用休息时间 = 累积余额 + 当前会话赚到的
-                const totalAvailableRest = this.accumulatedRestTime + this.currentSessionEarnedRest;
+                // 将当前会话专注时间累加到有效专注时间
+                const sessionMinutes = this.currentSessionFocusTime / 60;
+                this.effectiveFocusTime += sessionMinutes;
 
-                if (totalAvailableRest < 300) { // 5分钟
-                    alert('休息时间还不足5分钟，继续专注吧！');
+                // 计算休息需求
+                this.restRequired = this.calculateRestRequired(this.effectiveFocusTime);
+
+                // 判断是否可以休息（>= 5分钟）
+                if (this.restRequired < 5) {
+                    alert(`休息需求不足5分钟（当前${this.restRequired.toFixed(1)}分钟），继续专注吧！`);
                     return;
                 }
 
                 // 保存当前专注会话
-                if (this.focusTime > 0) {
-                    this.saveSession(this.focusTime);
+                if (this.currentSessionFocusTime > 0) {
+                    this.saveSession(this.currentSessionFocusTime);
                 }
 
-                // 将当前会话赚到的休息时间加入累积余额
-                this.accumulatedRestTime += this.currentSessionEarnedRest;
-                this.currentSessionEarnedRest = 0;
-
-                // 记录开始休息时的累积时间
-                this.restStartAmount = this.accumulatedRestTime;
+                // 记录开始休息时的休息需求
+                this.restStartRequired = this.restRequired;
 
                 this.state = 'resting';
                 this.currentRestTime = 0;
-                this.focusTime = 0;
+                this.currentSessionFocusTime = 0;
                 this.startTime = Date.now();
 
                 clearInterval(this.timerInterval);
@@ -523,29 +532,40 @@
             }
 
             endRest() {
+                // 计算实际休息时间（分钟）
+                const restActualMinutes = this.currentRestTime / 60;
+
+                // 计算剩余休息需求
+                const restRemaining = this.restStartRequired - restActualMinutes;
+
+                // 根据剩余休息需求，反推新的有效专注时间
+                this.effectiveFocusTime = this.calculateEffectiveFocusFromRest(restRemaining);
+
+                // 重置状态
                 this.state = 'idle';
                 this.currentRestTime = 0;
+                this.restRequired = this.calculateRestRequired(this.effectiveFocusTime);
                 clearInterval(this.timerInterval);
                 this.updateUI();
             }
 
             reset() {
-                if (this.state === 'focusing' && this.focusTime > 60) {
-                    const shouldSave = confirm('确定要重置吗？当前专注数据将会保存，休息时间会加入余额。');
+                if (this.state === 'focusing' && this.currentSessionFocusTime > 60) {
+                    const shouldSave = confirm('确定要重置吗？当前专注数据将会保存并累加到有效专注时间。');
                     if (!shouldSave) {
                         return;
                     }
-                    if (this.focusTime > 0) {
-                        this.saveSession(this.focusTime);
-                        // 将当前会话赚到的休息时间加入累积余额
-                        this.accumulatedRestTime += this.currentSessionEarnedRest;
+                    if (this.currentSessionFocusTime > 0) {
+                        this.saveSession(this.currentSessionFocusTime);
+                        // 将当前会话累加到有效专注时间
+                        this.effectiveFocusTime += this.currentSessionFocusTime / 60;
                     }
                 }
 
                 this.state = 'idle';
-                this.focusTime = 0;
-                this.currentSessionEarnedRest = 0;
+                this.currentSessionFocusTime = 0;
                 this.currentRestTime = 0;
+                this.restRequired = this.calculateRestRequired(this.effectiveFocusTime);
                 this.startTime = null;
                 this.pauseTime = 0;
                 clearInterval(this.timerInterval);
@@ -555,10 +575,11 @@
 
             updateTimer() {
                 const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
-                this.focusTime = elapsed;
+                this.currentSessionFocusTime = elapsed;
 
-                // 基于当前专注时间的平方计算本次会话应得的休息时间
-                this.currentSessionEarnedRest = this.calculateRestTime(this.focusTime);
+                // 计算当前的休息需求（基于 t_eff + 当前会话）
+                const totalTEffMinutes = this.effectiveFocusTime + (this.currentSessionFocusTime / 60);
+                this.restRequired = this.calculateRestRequired(totalTEffMinutes);
 
                 this.updateUI();
             }
@@ -567,11 +588,12 @@
                 const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
                 this.currentRestTime = elapsed;
 
-                // 正确计算剩余休息时间：开始时的累积时间 - 已休息时间
-                this.accumulatedRestTime = Math.max(0, this.restStartAmount - elapsed);
+                // 计算剩余休息需求（分钟）
+                const restActualMinutes = this.currentRestTime / 60;
+                const restRemaining = Math.max(0, this.restStartRequired - restActualMinutes);
 
-                if (this.accumulatedRestTime <= 0) {
-                    // 休息时间用完，自动开始专注
+                // 如果休息需求满足（剩余 <= 0），自动开始专注
+                if (restRemaining <= 0) {
                     this.endRest();
                     this.startFocus();
                     return;
@@ -608,7 +630,7 @@
                     statusBadge.textContent = '正在专注';
                     statusBadge.style.background = 'rgba(16, 185, 129, 0.3)';
                     timerLabel.textContent = '保持专注，进入心流';
-                    timerDisplay.textContent = this.formatTime(this.focusTime);
+                    timerDisplay.textContent = this.formatTime(this.currentSessionFocusTime);
                     startBtn.style.display = 'none';
                     pauseBtn.style.display = 'inline-block';
                 } else if (this.state === 'resting') {
@@ -622,7 +644,7 @@
                     statusBadge.textContent = '已暂停';
                     statusBadge.style.background = 'rgba(251, 191, 36, 0.3)';
                     timerLabel.textContent = '暂停中';
-                    timerDisplay.textContent = this.formatTime(this.focusTime);
+                    timerDisplay.textContent = this.formatTime(this.currentSessionFocusTime);
                     startBtn.style.display = 'inline-block';
                     startBtn.textContent = '继续';
                     pauseBtn.style.display = 'none';
@@ -638,37 +660,44 @@
 
                 // 更新统计信息
                 document.getElementById('currentFocusTime').textContent =
-                    Math.floor(this.focusTime / 60) + '分钟';
+                    Math.floor(this.currentSessionFocusTime / 60) + '分钟';
 
-                // 计算总可用休息时间（累积余额 + 当前会话赚到的）
-                const totalAvailableRest = this.accumulatedRestTime + this.currentSessionEarnedRest;
-                const totalRestMinutes = Math.floor(totalAvailableRest / 60);
-                const totalRestSeconds = Math.floor(totalAvailableRest % 60);
+                // 显示休息需求时间
+                const restRequiredMinutes = Math.floor(this.restRequired);
+                const restRequiredSeconds = Math.floor((this.restRequired % 1) * 60);
                 document.getElementById('accumulatedRest').textContent =
-                    `${totalRestMinutes}分${totalRestSeconds}秒`;
+                    `${restRequiredMinutes}分${restRequiredSeconds}秒`;
 
-                // 更新休息进度条
-                const restProgress = Math.min(100, (totalAvailableRest / 300) * 100);
+                // 更新休息进度条（基于5分钟门槛）
+                const restProgress = Math.min(100, (this.restRequired / 5) * 100);
                 document.getElementById('restProgress').style.width = restProgress + '%';
 
-                // 显示平方模型说明（基于当前专注时间计算的比例）
-                if (this.focusTime > 0) {
-                    const effectiveRatio = this.currentSessionEarnedRest / this.focusTime;
-                    restRatio.textContent = `${Math.round(effectiveRatio * 100)}% (平方增长)`;
+                // 显示有效专注时间和有效休息率
+                if (this.currentSessionFocusTime > 0) {
+                    const totalTEff = this.effectiveFocusTime + (this.currentSessionFocusTime / 60);
+                    const effectiveRatio = this.restRequired / (totalTEff || 1);
+                    restRatio.textContent = `t_eff=${totalTEff.toFixed(1)}min (${Math.round(effectiveRatio * 100)}%)`;
+                } else if (this.effectiveFocusTime > 0) {
+                    const effectiveRatio = this.restRequired / this.effectiveFocusTime;
+                    restRatio.textContent = `t_eff=${this.effectiveFocusTime.toFixed(1)}min (${Math.round(effectiveRatio * 100)}%)`;
                 } else {
                     restRatio.textContent = '平方模型';
                 }
 
                 const restStatus = document.getElementById('restStatus');
-                if (totalAvailableRest >= 300) {
+                if (this.restRequired >= 5) {
                     restStatus.textContent = '可以休息了！';
                     restStatus.style.color = '#10b981';
                     restBtn.disabled = false;
                 } else {
-                    // 使用新公式计算还需专注的时间
-                    const needed = 300 - totalAvailableRest;
-                    const focusTimeNeeded = this.calculateFocusTimeNeeded(this.focusTime, needed);
-                    const minutesNeeded = Math.ceil(focusTimeNeeded / 60);
+                    // 计算还需专注多久才能达到5分钟门槛
+                    const currentSessionMinutes = this.currentSessionFocusTime / 60;
+                    const focusTimeNeeded = this.calculateFocusTimeNeeded(
+                        this.effectiveFocusTime,
+                        currentSessionMinutes,
+                        5
+                    );
+                    const minutesNeeded = Math.ceil(focusTimeNeeded);
                     restStatus.textContent = `还需专注约${minutesNeeded}分钟`;
                     restStatus.style.color = '#64748b';
                     restBtn.disabled = true;
