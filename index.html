@@ -641,6 +641,7 @@
                     timerDisplay.textContent = this.formatTime(this.currentSessionFocusTime);
                     startBtn.style.display = 'none';
                     pauseBtn.style.display = 'inline-block';
+                    restBtn.style.display = 'inline-block';
                     endRestBtn.style.display = 'none';
                 } else if (this.state === 'resting') {
                     statusBadge.textContent = '正在休息';
@@ -649,6 +650,7 @@
                     timerDisplay.textContent = this.formatTime(this.currentRestTime);
                     startBtn.style.display = 'none';
                     pauseBtn.style.display = 'none';
+                    restBtn.style.display = 'none';
                     endRestBtn.style.display = 'inline-block';
                 } else if (this.state === 'paused') {
                     statusBadge.textContent = '已暂停';
@@ -658,6 +660,7 @@
                     startBtn.style.display = 'inline-block';
                     startBtn.textContent = '继续';
                     pauseBtn.style.display = 'none';
+                    restBtn.style.display = 'inline-block';
                     endRestBtn.style.display = 'none';
                 } else {
                     statusBadge.textContent = '待开始';
@@ -667,6 +670,7 @@
                     startBtn.style.display = 'inline-block';
                     startBtn.textContent = '开始专注';
                     pauseBtn.style.display = 'none';
+                    restBtn.style.display = 'inline-block';
                     endRestBtn.style.display = 'none';
                 }
 
