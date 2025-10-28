@@ -143,6 +143,11 @@
             opacity: 0.5;
         }
 
+        .btn-leave {
+            background: #ef4444;
+            color: white;
+        }
+
         .stats-section {
             background: #f8fafc;
             border-radius: 16px;
@@ -318,6 +323,21 @@
             font-weight: 600;
         }
 
+        .leave-info {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 15px;
+            border-radius: 12px;
+            margin: 15px 0;
+            font-size: 0.95em;
+            line-height: 1.6;
+        }
+
+        .leave-info strong {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 1.05em;
+        }
+
         .tooltip {
             position: absolute;
             background: rgba(0, 0, 0, 0.8);
@@ -344,6 +364,10 @@
                 <div class="timer-display" id="timerDisplay">00:00:00</div>
                 <div class="timer-label" id="timerLabel">准备开始专注</div>
 
+                <div id="leaveInfoContainer" style="display: none;">
+                    <div class="leave-info" id="leaveInfo"></div>
+                </div>
+
                 <div class="rest-ratio-indicator">
                     <span>有效休息率:</span>
                     <span class="ratio-badge" id="restRatio">平方模型</span>
@@ -354,7 +378,7 @@
                     <button class="btn btn-secondary" id="pauseBtn" onclick="app.pauseFocus()" style="display: none;">暂停</button>
                     <button class="btn btn-rest" id="restBtn" onclick="app.startRest()" disabled>开始休息</button>
                     <button class="btn btn-secondary" id="endRestBtn" onclick="app.endRestManually()" style="display: none;">结束休息</button>
-                    <button class="btn btn-secondary" id="resetBtn" onclick="app.reset()">重置</button>
+                    <button class="btn btn-leave" id="leaveBtn" onclick="app.leave()">离开</button>
                 </div>
             </div>
 
@@ -409,7 +433,8 @@
             5. 休息消除疲劳：休息后根据剩余需求反推新的 t_eff<br>
             &nbsp;&nbsp;&nbsp;• 如果休息充分（剩余≤3分钟），t_eff 清零<br>
             &nbsp;&nbsp;&nbsp;• 如果休息不足，保留部分疲劳继续累积<br>
-            6. 休息结束自动开始专注，无需手动操作
+            6. <strong>离开功能：</strong>点击"离开"结束整个循环（吃饭/睡觉等），离开期间自动视为休息，下次开始时会自动计算恢复的疲劳<br>
+            7. 休息结束自动开始专注，无需手动操作
         </div>
     </div>
 
@@ -429,10 +454,16 @@
                 this.restRequired = 0; // 当前需要的休息时间（分钟）
                 this.restStartRequired = 0; // 开始休息时需要的休息时间（分钟）
 
+                // 离开状态
+                this.leaveTime = null; // 离开时间戳
+                this.leaveEffectiveFocus = 0; // 离开时的疲劳度
+                this.leaveRestRequired = 0; // 离开时的休息需求
+
                 this.startTime = null;
                 this.pauseTime = 0;
                 this.timerInterval = null;
                 this.sessions = this.loadSessions();
+                this.loadLeaveState();
 
                 this.init();
             }
@@ -449,6 +480,32 @@
 
             saveSessions() {
                 localStorage.setItem('buddhaflow_sessions', JSON.stringify(this.sessions));
+            }
+
+            loadLeaveState() {
+                const data = localStorage.getItem('buddhaflow_leave_state');
+                if (data) {
+                    const state = JSON.parse(data);
+                    this.leaveTime = state.leaveTime;
+                    this.leaveEffectiveFocus = state.effectiveFocus;
+                    this.leaveRestRequired = state.restRequired;
+                }
+            }
+
+            saveLeaveState() {
+                const state = {
+                    leaveTime: this.leaveTime,
+                    effectiveFocus: this.leaveEffectiveFocus,
+                    restRequired: this.leaveRestRequired
+                };
+                localStorage.setItem('buddhaflow_leave_state', JSON.stringify(state));
+            }
+
+            clearLeaveState() {
+                this.leaveTime = null;
+                this.leaveEffectiveFocus = 0;
+                this.leaveRestRequired = 0;
+                localStorage.removeItem('buddhaflow_leave_state');
             }
 
             calculateRestRequired(tEffMinutes) {
@@ -477,7 +534,44 @@
                 return Math.max(0, targetTEff - currentTotalTEff);
             }
 
+            processLeaveReturn() {
+                if (!this.leaveTime) {
+                    return null;
+                }
+
+                const now = Date.now();
+                const awayTimeMs = now - this.leaveTime;
+                const awayTimeMinutes = awayTimeMs / (1000 * 60);
+
+                // 计算剩余休息需求
+                const restRemaining = Math.max(0, this.leaveRestRequired - awayTimeMinutes);
+
+                // 根据剩余休息需求反推新的疲劳度
+                const newEffectiveFocus = this.calculateEffectiveFocusFromRest(restRemaining);
+
+                const result = {
+                    awayTimeMinutes,
+                    oldEffectiveFocus: this.leaveEffectiveFocus,
+                    newEffectiveFocus,
+                    recoveredFatigue: this.leaveEffectiveFocus - newEffectiveFocus,
+                    oldRestRequired: this.leaveRestRequired,
+                    newRestRequired: restRemaining
+                };
+
+                // 更新疲劳度
+                this.effectiveFocusTime = newEffectiveFocus;
+                this.restRequired = this.calculateRestRequired(this.effectiveFocusTime);
+
+                // 清除离开状态
+                this.clearLeaveState();
+
+                return result;
+            }
+
             startFocus() {
+                // 检查是否有离开返回的情况
+                const leaveReturn = this.processLeaveReturn();
+
                 if (this.state === 'resting') {
                     this.endRest();
                 }
@@ -488,7 +582,7 @@
                 this.pauseTime = 0;
 
                 this.timerInterval = setInterval(() => this.updateTimer(), 100);
-                this.updateUI();
+                this.updateUI(leaveReturn);
             }
 
             pauseFocus() {
@@ -556,26 +650,38 @@
                 this.startFocus();
             }
 
-            reset() {
+            leave() {
+                let shouldLeave = true;
+                
+                // 如果正在专注且时间超过1分钟，提示保存
                 if (this.state === 'focusing' && this.currentSessionFocusTime > 60) {
-                    const shouldSave = confirm('确定要重置吗？当前专注数据将会保存并累加到有效专注时间。');
-                    if (!shouldSave) {
+                    shouldLeave = confirm('确定要离开吗？当前专注数据将会保存，离开期间会自动视为休息时间。');
+                    if (!shouldLeave) {
                         return;
                     }
-                    if (this.currentSessionFocusTime > 0) {
-                        this.saveSession(this.currentSessionFocusTime);
-                        // 将当前会话累加到有效专注时间
-                        this.effectiveFocusTime += this.currentSessionFocusTime / 60;
-                    }
+                    // 保存当前会话
+                    this.saveSession(this.currentSessionFocusTime);
+                    // 累加到疲劳度
+                    this.effectiveFocusTime += this.currentSessionFocusTime / 60;
+                } else if (this.state === 'resting') {
+                    // 如果正在休息，先结束休息
+                    this.endRest();
                 }
 
+                // 记录离开状态
+                this.leaveTime = Date.now();
+                this.leaveEffectiveFocus = this.effectiveFocusTime;
+                this.leaveRestRequired = this.calculateRestRequired(this.effectiveFocusTime);
+                this.saveLeaveState();
+
+                // 重置当前状态
                 this.state = 'idle';
                 this.currentSessionFocusTime = 0;
                 this.currentRestTime = 0;
-                this.restRequired = this.calculateRestRequired(this.effectiveFocusTime);
                 this.startTime = null;
                 this.pauseTime = 0;
                 clearInterval(this.timerInterval);
+                
                 this.updateUI();
                 this.renderCharts();
             }
@@ -624,7 +730,7 @@
                 this.renderCharts();
             }
 
-            updateUI() {
+            updateUI(leaveReturn = null) {
                 const statusBadge = document.getElementById('statusBadge');
                 const timerDisplay = document.getElementById('timerDisplay');
                 const timerLabel = document.getElementById('timerLabel');
@@ -633,6 +739,39 @@
                 const restBtn = document.getElementById('restBtn');
                 const endRestBtn = document.getElementById('endRestBtn');
                 const restRatio = document.getElementById('restRatio');
+                const leaveInfoContainer = document.getElementById('leaveInfoContainer');
+                const leaveInfo = document.getElementById('leaveInfo');
+
+                // 显示离开返回信息
+                if (leaveReturn) {
+                    const hours = Math.floor(leaveReturn.awayTimeMinutes / 60);
+                    const minutes = Math.floor(leaveReturn.awayTimeMinutes % 60);
+                    const timeStr = hours > 0 ? `${hours}小时${minutes}分钟` : `${minutes}分钟`;
+                    
+                    leaveInfo.innerHTML = `
+                        <strong>🎉 欢迎回来！</strong>
+                        离开时长: ${timeStr}<br>
+                        疲劳恢复: ${leaveReturn.recoveredFatigue.toFixed(1)}分钟<br>
+                        当前疲劳: t_eff = ${leaveReturn.newEffectiveFocus.toFixed(1)}分钟
+                        ${leaveReturn.newEffectiveFocus === 0 ? ' (已完全恢复！)' : ''}
+                    `;
+                    leaveInfoContainer.style.display = 'block';
+                } else if (this.leaveTime) {
+                    // 显示离开状态提示
+                    const hours = Math.floor(this.leaveEffectiveFocus / 60);
+                    const minutes = Math.floor(this.leaveEffectiveFocus % 60);
+                    const timeStr = hours > 0 ? `${hours}小时${minutes}分钟` : `${minutes}分钟`;
+                    
+                    leaveInfo.innerHTML = `
+                        <strong>💤 您已离开</strong><br>
+                        离开时疲劳: t_eff = ${this.leaveEffectiveFocus.toFixed(1)}分钟<br>
+                        需要休息: ${this.leaveRestRequired.toFixed(1)}分钟<br>
+                        <em>点击"开始专注"回来时会自动计算休息效果</em>
+                    `;
+                    leaveInfoContainer.style.display = 'block';
+                } else {
+                    leaveInfoContainer.style.display = 'none';
+                }
 
                 // 更新状态徽章和标签
                 if (this.state === 'focusing') {
